@@ -5,154 +5,151 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 
-// ===== CONFIG =====
 const API_BASE = "https://wtxmd52.tele68.com";
 
 const JWT_TOKEN =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjowLCJtZXNzYWdlIjoiU3VjY2VzcyIsIm5pY2tOYW1lIjoic2hvcHRvb2x0YWl4aXUiLCJhY2Nlc3NUb2tlbiI6ImM0ZDAyOGM3YmQ2MDUzZmNlOTIxZDA1MjdiNzQyNzc3IiwiaXNMb2dpbiI6dHJ1ZSwibW9uZXkiOjc5LCJpZCI6IjgwMTgxMDIiLCJ1c2VybmFtZSI6InZpZXQxMjExMSIsImlhdCI6MTc3OTE5MjQ1OCwiZXhwIjoxNzc5MjIxMjU4fQ.C_8SYvqM3RgRvW20mp7cLfpgXoh4yDAs3tH-9RCmvTE";
+  "YOUR_JWT_TOKEN";
 
-const ACCESS_TOKEN = "c4d028c7bd6053fce921d0527b742777";
+const ACCESS_TOKEN =
+  "YOUR_ACCESS_TOKEN";
 
 // ===== LƯU 10000 PHIÊN =====
 const history = [];
 const MAX_HISTORY = 10000;
 
-// ===== REQUEST HEADER =====
+// ===== HEADER =====
 const headers = {
   Authorization: `Bearer ${JWT_TOKEN}`,
   accesstoken: ACCESS_TOKEN,
   "Content-Type": "application/json",
 };
 
-// ===== HÀM DỰ ĐOÁN =====
-function predict(historyData) {
-  if (!historyData.length) {
-    return {
-      prediction: "ĐANG PHÂN TÍCH",
-      confidence: "0%",
-    };
-  }
+// ===== DANH SÁCH API THỬ =====
+const endpoints = [
+  "/api/webapi/GetNoaverageEmerdList",
+  "/api/webapi/GetGameIssue",
+  "/api/webapi/GetK3Issue",
+  "/api/webapi/GetK3Trend",
+  "/api/webapi/GetGameResult",
+];
 
+// ===== DỰ ĐOÁN =====
+function predict() {
   let tai = 0;
   let xiu = 0;
 
-  historyData.slice(0, 100).forEach((item) => {
-    if (item.total >= 11) tai++;
+  history.slice(0, 100).forEach((i) => {
+    if (i.total >= 11) tai++;
     else xiu++;
   });
 
-  const prediction = tai >= xiu ? "TÀI" : "XỈU";
-
-  const confidence = (
-    (Math.max(tai, xiu) / (tai + xiu)) *
-    100
-  ).toFixed(2);
-
   return {
-    prediction,
-    confidence: confidence + "%",
+    prediction: tai >= xiu ? "TÀI" : "XỈU",
     tai,
     xiu,
   };
 }
 
-// ===== LẤY DỮ LIỆU =====
+// ===== FETCH =====
 async function fetchData() {
-  try {
-    const res = await axios.get(
-      `${API_BASE}/api/webapi/GetNoaverageEmerdList`,
-      {
+  for (const endpoint of endpoints) {
+    try {
+      const url = API_BASE + endpoint;
+
+      console.log("Đang thử:", url);
+
+      const res = await axios.get(url, {
         headers,
-      }
-    );
+      });
 
-    const result = res.data;
+      const data = res.data;
 
-    if (!result || !result.data || !result.data.list) {
-      console.log("Không có dữ liệu");
-      return;
-    }
+      console.log("SUCCESS:", endpoint);
 
-    const list = result.data.list;
+      if (!data) continue;
 
-    list.forEach((item) => {
-      const exists = history.find(
-        (x) => x.issueNumber === item.issueNumber
-      );
+      const list =
+        data?.data?.list ||
+        data?.list ||
+        data?.data ||
+        [];
 
-      if (!exists) {
-        const total =
-          Number(item.n1) +
-          Number(item.n2) +
-          Number(item.n3);
+      if (!Array.isArray(list)) continue;
 
-        history.unshift({
-          issueNumber: item.issueNumber,
-          n1: item.n1,
-          n2: item.n2,
-          n3: item.n3,
-          total,
-          result: total >= 11 ? "TÀI" : "XỈU",
-          time: Date.now(),
-        });
+      list.forEach((item) => {
+        const issue =
+          item.issueNumber ||
+          item.issue ||
+          item.gameId ||
+          Date.now();
 
-        console.log(
-          `Phiên ${item.issueNumber} | ${total} | ${
-            total >= 11 ? "TÀI" : "XỈU"
-          }`
+        const exists = history.find(
+          (x) => x.issue === issue
         );
-      }
-    });
 
-    // ===== GIỮ 10000 PHIÊN =====
-    if (history.length > MAX_HISTORY) {
-      history.splice(MAX_HISTORY);
+        if (!exists) {
+          const n1 = Number(item.n1 || item.num1 || 1);
+          const n2 = Number(item.n2 || item.num2 || 1);
+          const n3 = Number(item.n3 || item.num3 || 1);
+
+          const total = n1 + n2 + n3;
+
+          history.unshift({
+            issue,
+            n1,
+            n2,
+            n3,
+            total,
+            result: total >= 11 ? "TÀI" : "XỈU",
+            time: Date.now(),
+          });
+
+          console.log(
+            `Phiên ${issue} | ${total}`
+          );
+        }
+      });
+
+      if (history.length > MAX_HISTORY) {
+        history.splice(MAX_HISTORY);
+      }
+
+      return;
+    } catch (err) {
+      console.log(
+        "FAIL:",
+        endpoint,
+        err.response?.status || err.message
+      );
     }
-  } catch (err) {
-    console.log("Lỗi:", err.message);
   }
 }
 
-// ===== AUTO UPDATE =====
-setInterval(fetchData, 2000);
+// ===== AUTO =====
+setInterval(fetchData, 3000);
 
 fetchData();
 
-// ===== API CHÍNH =====
+// ===== HOME =====
 app.get("/", (req, res) => {
-  const pred = predict(history);
+  const p = predict();
 
   res.json({
-    status: true,
-    totalSession: history.length,
-    prediction: pred.prediction,
-    confidence: pred.confidence,
-    tai: pred.tai,
-    xiu: pred.xiu,
+    status: "running",
+    total: history.length,
+    prediction: p.prediction,
+    tai: p.tai,
+    xiu: p.xiu,
     latest: history[0] || null,
-    history: history.slice(0, 50),
   });
 });
 
-// ===== FULL 10000 =====
+// ===== ALL =====
 app.get("/all", (req, res) => {
-  res.json({
-    total: history.length,
-    data: history,
-  });
-});
-
-// ===== CHECK =====
-app.get("/check", (req, res) => {
-  res.json({
-    api: API_BASE,
-    token: "ACTIVE",
-    status: "RUNNING",
-    total: history.length,
-  });
+  res.json(history);
 });
 
 // ===== START =====
 app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
+  console.log("Server running:", PORT);
 });
