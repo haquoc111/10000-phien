@@ -1,7 +1,6 @@
 {
   "name": "tele68-api",
   "version": "1.0.0",
-  "description": "tele68 realtime api",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

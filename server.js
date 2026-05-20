@@ -25,7 +25,8 @@ const MAX_HISTORY = 10000;
 const headers = {
   Authorization: `Bearer ${JWT_TOKEN}`,
   accesstoken: ACCESS_TOKEN,
-  "Content-Type": "application/json",
+  token: ACCESS_TOKEN,
+  "Content-Type": "application/json;charset=UTF-8",
 };
 
 // ================= PREDICT =================
@@ -46,110 +47,142 @@ function predict() {
   };
 }
 
-// ================= FETCH DATA =================
+// ================= FETCH =================
 
 async function fetchData() {
   try {
-    const url =
-      API_BASE + "/api/webapi/GetNoaverageEmerdList";
+    const endpoints = [
+      "/api/webapi/GetNoaverageEmerdList",
+      "/api/webapi/GetGameIssue",
+      "/api/webapi/GetK3Issue",
+      "/api/webapi/GetK3Trend",
+      "/api/webapi/GetGameResult",
+    ];
 
-    const response = await axios.post(
-      url,
-      {
-        pageSize: 10,
-        pageNo: 1,
-        typeId: 1,
-        language: 0,
-      },
-      {
-        headers,
+    for (const ep of endpoints) {
+      try {
+        const url = API_BASE + ep;
+
+        console.log("TRY:", url);
+
+        const response = await axios({
+          method: "POST",
+          url,
+          headers,
+          data: {
+            pageSize: 10,
+            pageNo: 1,
+            typeId: 1,
+            language: 0,
+          },
+          timeout: 10000,
+        });
+
+        const raw = response.data;
+
+        console.log("RAW:");
+        console.log(JSON.stringify(raw));
+
+        // ===== TỰ ĐỘNG TÌM ARRAY =====
+
+        let list = [];
+
+        if (Array.isArray(raw)) {
+          list = raw;
+        } else if (Array.isArray(raw.data)) {
+          list = raw.data;
+        } else if (Array.isArray(raw.list)) {
+          list = raw.list;
+        } else if (Array.isArray(raw.data?.list)) {
+          list = raw.data.list;
+        }
+
+        if (!list.length) {
+          console.log("EMPTY LIST");
+          continue;
+        }
+
+        console.log("FOUND:", list.length);
+
+        list.forEach((item) => {
+          const issue =
+            item.issueNumber ||
+            item.issue ||
+            item.expect ||
+            item.gameId ||
+            item.id;
+
+          if (!issue) return;
+
+          const exists = history.find(
+            (x) => x.issue === issue
+          );
+
+          if (exists) return;
+
+          // ===== LẤY XÚC XẮC =====
+
+          let code =
+            item.openCode ||
+            item.opencode ||
+            item.number ||
+            item.result ||
+            item.numbers ||
+            "1,1,1";
+
+          if (Array.isArray(code)) {
+            code = code.join(",");
+          }
+
+          const split = code
+            .toString()
+            .replace(/\|/g, ",")
+            .split(",");
+
+          const n1 = Number(split[0]) || 1;
+          const n2 = Number(split[1]) || 1;
+          const n3 = Number(split[2]) || 1;
+
+          const total = n1 + n2 + n3;
+
+          history.unshift({
+            issue,
+            dice: [n1, n2, n3],
+            total,
+            result: total >= 11 ? "TÀI" : "XỈU",
+            time: Date.now(),
+          });
+
+          console.log(
+            `NEW ${issue} => ${n1}-${n2}-${n3}`
+          );
+        });
+
+        if (history.length > MAX_HISTORY) {
+          history.splice(MAX_HISTORY);
+        }
+
+        return;
+      } catch (e) {
+        console.log(
+          "FAIL:",
+          ep,
+          e.response?.status || e.message
+        );
       }
-    );
-
-    const raw = response.data;
-
-    console.log("RAW:");
-    console.log(JSON.stringify(raw));
-
-    const list =
-      raw?.data?.list ||
-      raw?.data ||
-      raw?.list ||
-      [];
-
-    if (!Array.isArray(list)) {
-      console.log("Không có list");
-      return;
-    }
-
-    list.forEach((item) => {
-      const issue =
-        item.issueNumber ||
-        item.issue ||
-        item.expect ||
-        item.gameId;
-
-      if (!issue) return;
-
-      const exists = history.find(
-        (x) => x.issue === issue
-      );
-
-      if (exists) return;
-
-      const code =
-        item.openCode ||
-        item.opencode ||
-        item.number ||
-        "1,1,1";
-
-      const split = code
-        .toString()
-        .split(",");
-
-      const n1 = Number(split[0]) || 1;
-      const n2 = Number(split[1]) || 1;
-      const n3 = Number(split[2]) || 1;
-
-      const total = n1 + n2 + n3;
-
-      history.unshift({
-        issue,
-        dice: [n1, n2, n3],
-        total,
-        result: total >= 11 ? "TÀI" : "XỈU",
-        time: Date.now(),
-      });
-
-      console.log(
-        `NEW: ${issue} | ${n1}-${n2}-${n3} | ${total}`
-      );
-    });
-
-    // ===== GIỮ 10000 PHIÊN =====
-
-    if (history.length > MAX_HISTORY) {
-      history.splice(MAX_HISTORY);
     }
   } catch (err) {
-    console.log("ERROR:");
-
-    if (err.response) {
-      console.log(err.response.status);
-      console.log(err.response.data);
-    } else {
-      console.log(err.message);
-    }
+    console.log("MAIN ERROR:", err.message);
   }
 }
 
-// ================= AUTO RUN =================
+// ================= AUTO =================
 
 setInterval(fetchData, 3000);
 
 fetchData();
 
-// ================= ROUTES =================
+// ================= API =================
 
 app.get("/", (req, res) => {
   const p = predict();
@@ -166,23 +199,19 @@ app.get("/", (req, res) => {
 });
 
 app.get("/all", (req, res) => {
-  res.json({
-    total: history.length,
-    data: history,
-  });
+  res.json(history);
 });
 
-app.get("/check", (req, res) => {
+app.get("/logs", (req, res) => {
   res.json({
-    status: "online",
     api: API_BASE,
     total: history.length,
-    last: history[0] || null,
+    latest: history[0] || null,
   });
 });
 
 // ================= START =================
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("SERVER RUNNING:", PORT);
 });
